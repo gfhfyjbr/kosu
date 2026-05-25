@@ -32,28 +32,39 @@ pub fn run(state: AppState) -> std::io::Result<()> {
 
     // Single walk produces both junk hits and tree entries.
     eprintln!("[kosu] Scanning {}...", state.root.display());
+    let t0 = std::time::Instant::now();
     let mut result = scan::scan_all(state.root.clone(), state.threads)?;
-    eprintln!("[kosu] {} junk dirs, {} tree entries. Computing sizes...",
-        result.hits.len(), result.tree.len());
+    eprintln!("[STAGE] scan_all: {:.3}s  ({} hits, {} tree)",
+        t0.elapsed().as_secs_f64(), result.hits.len(), result.tree.len());
 
-    // Compute junk sizes once, share with tree.
+    let t1 = std::time::Instant::now();
     scan::compute_sizes(&mut result.hits, tc);
+    eprintln!("[STAGE] compute_sizes: {:.3}s", t1.elapsed().as_secs_f64());
+
+    let t2 = std::time::Instant::now();
     result.hits.sort_by(|a, b| b.size_bytes.cmp(&a.size_bytes));
+    eprintln!("[STAGE] sort hits: {:.3}s", t2.elapsed().as_secs_f64());
 
-    // Copy computed junk sizes into tree entries (avoids recomputing).
+    let t3 = std::time::Instant::now();
     scan::apply_junk_sizes_to_tree(&result.hits, &mut result.tree);
+    eprintln!("[STAGE] apply_junk_sizes_to_tree: {:.3}s", t3.elapsed().as_secs_f64());
 
-    // Accumulate sizes bottom-up (no recomputation of junk sizes).
+    let t4 = std::time::Instant::now();
     scan::accumulate_tree(&mut result.tree);
+    eprintln!("[STAGE] accumulate_tree: {:.3}s", t4.elapsed().as_secs_f64());
 
     if unsafe { libc::isatty(libc::STDOUT_FILENO) } == 0 {
         return headless_output(&result.hits);
     }
 
-    // Pre-compute indices.
+    let t5 = std::time::Instant::now();
     let mut by_size = (0..result.tree.len()).collect::<Vec<_>>();
     by_size.sort_unstable_by(|&a, &b| result.tree[b].size.cmp(&result.tree[a].size));
+    eprintln!("[STAGE] by_size sort: {:.3}s", t5.elapsed().as_secs_f64());
+
+    let t6 = std::time::Instant::now();
     let children_map = build_children_index(&result.tree);
+    eprintln!("[STAGE] build_children_index: {:.3}s", t6.elapsed().as_secs_f64());
 
     HITS.set(result.hits).map_err(|_| std::io::Error::other("HITS set"))?;
     TREE.set(result.tree).map_err(|_| std::io::Error::other("TREE set"))?;

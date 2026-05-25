@@ -239,44 +239,4 @@ fn marker_exists(parent: &Path, marker: &str) -> bool {
     parent.join(marker).exists()
 }
 
-/// Calculate **actual disk usage** of a directory tree (blocking).
-///
-/// Uses `st_blocks * 512` instead of `st_size` so that sparse files
-/// (e.g. Docker.raw) report their real on-disk footprint, not the
-/// virtual file size.
-pub fn dir_size(path: &Path) -> u64 {
-    let mut total: u64 = 0;
-    dir_size_inner(path, &mut total);
-    total
-}
 
-fn dir_size_inner(path: &Path, total: &mut u64) {
-    let entries = match std::fs::read_dir(path) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-    for entry in entries.flatten() {
-        let metadata = match entry.metadata() {
-            Ok(m) => m,
-            Err(_) => continue,
-        };
-        if metadata.is_file() {
-            *total += disk_usage(&metadata);
-        } else if metadata.is_dir() {
-            dir_size_inner(&entry.path(), total);
-        }
-    }
-}
-
-/// Actual bytes on disk: `st_blocks * 512`.
-/// Falls back to `st_size` on platforms without block info.
-#[cfg(unix)]
-fn disk_usage(metadata: &std::fs::Metadata) -> u64 {
-    use std::os::unix::fs::MetadataExt;
-    metadata.blocks() * 512
-}
-
-#[cfg(not(unix))]
-fn disk_usage(metadata: &std::fs::Metadata) -> u64 {
-    metadata.len()
-}

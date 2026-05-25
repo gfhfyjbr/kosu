@@ -136,17 +136,25 @@ pub fn scan_all(root: PathBuf, threads: Option<usize>) -> io::Result<FullScanRes
 }
 
 /// Compute sizes for junk hits in parallel.
+///
+/// Walks every hit's subtree through the same work-stealing pool used by
+/// the main scan, with `getattrlistbulk` returning `ATTR_FILE_ALLOCSIZE`
+/// (actual disk usage) in batches of ~800 entries per syscall. Previously
+/// this used `std::fs::read_dir + entry.metadata()` recursively — three
+/// syscalls per file and zero parallelism inside a single huge hit, which
+/// dominated `clean ~` wall time at ~12s out of 22s.
 pub fn compute_sizes(hits: &mut [JunkHit], threads: usize) {
-    let chunk_size = (hits.len() / threads.max(1)).max(1);
-    std::thread::scope(|scope| {
-        for chunk in hits.chunks_mut(chunk_size) {
-            scope.spawn(|| {
-                for hit in chunk.iter_mut() {
-                    hit.size_bytes = junk::dir_size(&hit.path);
-                }
-            });
-        }
-    });
+    if hits.is_empty() {
+        return;
+    }
+    let roots: Vec<PathBuf> = hits.iter().map(|h| h.path.clone()).collect();
+    let mut config = walker::WalkConfig::default();
+    config.threads = threads.max(1);
+    let reader = platform::build_reader(platform::ReaderOptions { with_size: true });
+    let sizes = walker::walk_aggregated_sizes(&roots, &config, reader.as_ref());
+    for (hit, size) in hits.iter_mut().zip(sizes.into_iter()) {
+        hit.size_bytes = size;
+    }
 }
 
 /// Copy already-computed junk sizes from hits into matching tree entries.

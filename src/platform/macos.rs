@@ -28,7 +28,11 @@ const ATTR_BIT_MAP_COUNT: u16 = 5;
 const ATTR_CMN_NAME: u32 = 0x00000001;
 const ATTR_CMN_OBJTYPE: u32 = 0x00000008;
 const ATTR_CMN_RETURNED_ATTRS: u32 = 0x80000000;
-const ATTR_FILE_DATALENGTH: u32 = 0x00000200;
+/// Actual bytes on disk (sum of allocated blocks). Matches `st_blocks * 512`
+/// from `lstat`. Use this instead of `ATTR_FILE_DATALENGTH` so sparse files
+/// (Docker.raw and friends) report real on-disk footprint, not the virtual
+/// data-fork length.
+const ATTR_FILE_ALLOCSIZE: u32 = 0x00000004;
 
 const FSOPT_NOFOLLOW: u64 = 0x00000001;
 
@@ -117,7 +121,7 @@ impl DirReader for AttrListBulkReader {
         let _guard = FdGuard(fd);
 
         let fileattr = if self.request_size {
-            ATTR_FILE_DATALENGTH
+            ATTR_FILE_ALLOCSIZE
         } else {
             0
         };
@@ -232,7 +236,7 @@ fn parse_buffer(
             }
 
         let mut size: Option<u64> = None;
-        if returned.fileattr & ATTR_FILE_DATALENGTH != 0
+        if returned.fileattr & ATTR_FILE_ALLOCSIZE != 0
             && field + 8 <= entry_end
         {
             // SAFETY: bounds checked.
